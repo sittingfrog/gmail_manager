@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }
+      h2, h3 { color: #444; }
+      .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+      .form-group { margin-bottom: 15px; }
+      label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+      input[type="text"], input[type="email"] { width: 95%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+      input[type="checkbox"] { margin-right: 10px; }
+      button { background-color: #4285F4; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+      button:hover { background-color: #357ae8; }
+      button:disabled { background-color: #aaa; cursor: not-allowed; }
+      .delete-btn { background-color: #db4437; margin-left: 10px; }
+      .delete-btn:hover { background-color: #c53727; }
+      .rule-card { border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px; background: #fff; }
+      .rule-header { background-color: #f2f2f2; padding: 10px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
+      .rule-body { padding: 15px; }
+      .attachment-action { border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
+      .attachment-action:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+      .add-action-form { background-color: #f9f9f9; padding: 15px; margin-top: 15px; border-radius: 4px; border: 1px solid #eee; }
+      .no-rules { text-align: center; color: #777; padding: 20px; }
+      .loading, #error { text-align: center; padding: 10px; }
+      .loading { color: #4285F4; }
+      #error { color: #db4437; display: none; }
+      .help-text { font-size: 12px; color: #777; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Gmail Rule Manager</h2>
+      <p>Create rules to automatically process incoming emails. Set up a time-driven trigger for the <code>processEmails</code> function to run the automation.</p>
+      
+      <div id="error"></div>
+      
+      <h3>Create New Rule</h3>
+      <form id="ruleForm">
+        <div class="form-group">
+          <label for="sender">Sender's Email (optional)</label>
+          <input type="email" id="sender" name="sender" placeholder="e.g., newsletter@example.com">
+        </div>
+        <div class="form-group">
+          <label for="subject">Subject Contains (optional)</label>
+          <input type="text" id="subject" name="subject" placeholder="e.g., 'Invoice' or 'Report'">
+        </div>
+        <button type="submit">Add Rule</button>
+      </form>
+
+      <h3>Existing Rules</h3>
+      <div class="loading" id="rulesLoading">Loading rules...</div>
+      <div id="rulesContainer">
+        <!-- Rule cards will be populated here -->
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('ruleForm');
+      const rulesContainer = document.getElementById('rulesContainer');
+      const rulesLoading = document.getElementById('rulesLoading');
+      const errorDiv = document.getElementById('error');
+
+      // Handle form submission
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const rule = {
+          sender: form.sender.value.trim(),
+          subject: form.subject.value.trim(),
+          attachmentActions: []
+        };
+
+        if (!rule.sender && !rule.subject) {
+          showError("A rule must have at least a sender or subject filter.");
+          return;
+        }
+
+        // Disable button to prevent multiple submissions
+        e.target.querySelector('button').disabled = true;
+
+        google.script.run
+          .withSuccessHandler(rules => {
+            renderRules(rules);
+            form.reset();
+            e.target.querySelector('button').disabled = false;
+          })
+          .withFailureHandler(err => {
+            showError(err.message);
+            e.target.querySelector('button').disabled = false;
+          })
+          .addRule(rule);
+      });
+
+      // Render the list of rules
+      function renderRules(rules) {
+        rulesContainer.innerHTML = '';
+        if (rules && rules.length > 0) {
+          rules.forEach(rule => {
+            const card = document.createElement('div');
+            card.className = 'rule-card';
+            card.innerHTML = `
+              <div class="rule-header">
+                <div>
+                  ${rule.sender ? `<strong>From:</strong> ${rule.sender}<br>` : ''}
+                  ${rule.subject ? `<strong>Subject:</strong> ${rule.subject}` : ''}
+                </div>
+                <button class="delete-btn" onclick="deleteRule('${rule.id}', this)">Delete Rule</button>
+              </div>
+              <div class="rule-body">
+                <h5>Attachment Actions</h5>
+                <div id="actions-${rule.id}"></div>
+                <div class="add-action-form">
+                  <h6>Add New Attachment Action</h6>
+                  <form id="form-${rule.id}" onsubmit="addAttachmentAction(event, '${rule.id}')">
+                    <div class="form-group">
+                      <label>Attachment Filename (optional)</label>
+                      <input type="text" name="attachmentName" placeholder="e.g., report.pdf or * for any">
+                      <p class="help-text">Use <code>*</code> to match any attachment. Default is <code>*</code>.</p>
+                    </div>
+                    <div class="form-group">
+                      <label>Output Filename Template (optional)</label>
+                      <input type="text" name="outputFileName" placeholder="e.g., Report - {date}.pdf">
+                      <p class="help-text">Placeholders: <code>{original_name}</code>, <code>{subject}</code>, <code>{date}</code>.</p>
+                    </div>
+                    <div class="form-group">
+                      <label>Google Drive Folder ID</label>
+                      <input type="text" name="driveFolderId" required>
+                      <p class="help-text">Find this in the folder's URL in Google Drive.</p>
+                    </div>
+                    <button type="submit">Add Action</button>
+                  </form>
+                </div>
+              </div>
+            `;
+            rulesContainer.appendChild(card);
+            renderAttachmentActions(rule.id, rule.attachmentActions);
+          });
+        } else {
+          rulesContainer.innerHTML = '<div class="no-rules">No rules have been created yet.</div>';
+        }
+        rulesLoading.style.display = 'none';
+      }
+
+      function renderAttachmentActions(ruleId, actions) {
+        const container = document.getElementById(`actions-${ruleId}`);
+        container.innerHTML = '';
+        if (actions && actions.length > 0) {
+          actions.forEach(action => {
+            const actionDiv = document.createElement('div');
+            actionDiv.className = 'attachment-action';
+            actionDiv.innerHTML = `
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                  <strong>IF</strong> attachment name is <code>${action.attachmentName || '*'}</code>,<br>
+                  <strong>THEN</strong> save to Drive folder <code>${action.driveFolderId}</code><br>
+                  ${action.outputFileName ? `with name <code>${action.outputFileName}</code>` : 'with its original name.'}
+                </div>
+                <button class="delete-btn" onclick="deleteAttachmentAction('${ruleId}', '${action.id}', this)">Delete</button>
+              </div>
+            `;
+            container.appendChild(actionDiv);
+          });
+        } else {
+          container.innerHTML = '<p style="color: #777; font-style: italic;">No attachment actions defined for this rule.</p>';
+        }
+      }
+
+      function addAttachmentAction(event, ruleId) {
+        event.preventDefault();
+        const form = event.target;
+        const button = form.querySelector('button');
+        const action = {
+          attachmentName: form.attachmentName.value.trim(),
+          outputFileName: form.outputFileName.value.trim(),
+          driveFolderId: form.driveFolderId.value.trim()
+        };
+
+        button.disabled = true;
+        button.textContent = 'Adding...';
+
+        google.script.run
+          .withSuccessHandler(rules => {
+            renderRules(rules);
+          })
+          .withFailureHandler(err => {
+            showError(err.message);
+            button.disabled = false;
+            button.textContent = 'Add Action';
+          })
+          .addAttachmentAction(ruleId, action);
+      }
+
+      function deleteRule(ruleId, button) {
+        button.disabled = true;
+        button.textContent = 'Deleting...';
+        google.script.run
+          .withSuccessHandler(renderRules)
+          .withFailureHandler(err => {
+            showError(err.message);
+            button.disabled = false;
+            button.textContent = 'Delete Rule';
+          })
+          .deleteRule(ruleId);
+      }
+
+      function deleteAttachmentAction(ruleId, actionId, button) {
+        button.disabled = true;
+        button.textContent = 'Deleting...';
+        google.script.run
+          .withSuccessHandler(renderRules)
+          .withFailureHandler(err => showError(err.message))
+          .deleteAttachmentAction(ruleId, actionId);
+      }
+
+      // Show an error message
+      function showError(message) {
+        errorDiv.textContent = 'Error: ' + message;
+        errorDiv.style.display = 'block';
+        setTimeout(() => { errorDiv.style.display = 'none'; }, 5000);
+      }
+
+      // Initial load of rules
+      function loadInitialRules() {
+        google.script.run
+          .withSuccessHandler(renderRules)
+          .withFailureHandler(err => {
+            showError(err.message);
+            rulesLoading.style.display = 'none';
+            rulesContainer.innerHTML = '<div class="no-rules">Could not load rules.</div>';
+          })
+          .getRules();
+      }
+
+      // Load rules when the script loads
+      document.addEventListener('DOMContentLoaded', loadInitialRules);
+
+    </script>
+  </body>
+</html>
